@@ -13,8 +13,6 @@ import random
 import nltk
 from nltk.tokenize import sent_tokenize
 import pandas as pd
-import time
-from fake_useragent import UserAgent
 
 # Download required NLTK data
 try:
@@ -45,74 +43,6 @@ CREDIBLE_SOURCES = [
     "barrons.com",
     "morningstar.com"
 ]
-
-# Sites that require special handling
-RESTRICTED_SITES = {
-    "wsj.com": {
-        "headers": {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Cache-Control": "max-age=0"
-        },
-        "cookies": {
-            "wsjregion": "na,us",
-            "wsjcountry": "us"
-        }
-    },
-    "ft.com": {
-        "headers": {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1"
-        }
-    },
-    "bloomberg.com": {
-        "headers": {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1"
-        }
-    }
-}
-
-def get_random_headers() -> Dict[str, str]:
-    """
-    Generate random headers for requests.
-    
-    Returns:
-        Dict[str, str]: Headers dictionary
-    """
-    ua = UserAgent()
-    return {
-        'User-Agent': ua.random,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Cache-Control': 'max-age=0',
-        'TE': 'Trailers',
-    }
-
-def get_site_specific_config(url: str) -> Tuple[Dict[str, str], Dict[str, str]]:
-    """
-    Get site-specific headers and cookies for a URL.
-    
-    Args:
-        url (str): URL to get configuration for
-        
-    Returns:
-        Tuple[Dict[str, str], Dict[str, str]]: Headers and cookies
-    """
-    domain = urlparse(url).netloc.lower()
-    for site, config in RESTRICTED_SITES.items():
-        if site in domain:
-            return config.get('headers', {}), config.get('cookies', {})
-    return get_random_headers(), {}
 
 def clean_text(text: str) -> str:
     """
@@ -197,100 +127,60 @@ def get_sentiment(text: str) -> Tuple[str, float]:
         return sentiments[max_conf_idx], confidences[max_conf_idx]
     return "neutral", 0.0
 
-def fetch_article_content(url: str, max_retries: int = 3) -> str:
+def fetch_article_content(url: str) -> str:
     """
     Fetch and extract the main content from an article URL.
     
     Args:
         url (str): Article URL
-        max_retries (int): Maximum number of retry attempts
         
     Returns:
         str: Article content
     """
-    headers, cookies = get_site_specific_config(url)
-    session = requests.Session()
-    
-    for attempt in range(max_retries):
-        try:
-            # Add a small delay between retries
-            if attempt > 0:
-                time.sleep(2 * attempt)
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Remove unwanted elements
+        for element in soup.find_all(['script', 'style', 'nav', 'header', 'footer', 'aside', 'form']):
+            element.decompose()
             
-            response = session.get(
-                url,
-                headers=headers,
-                cookies=cookies,
-                timeout=15,
-                allow_redirects=True
-            )
-            
-            # Handle different response codes
-            if response.status_code == 403:
-                print(f"Access forbidden for {url}, trying with different headers...")
-                headers = get_random_headers()
-                continue
-            elif response.status_code == 429:
-                print(f"Rate limited for {url}, waiting before retry...")
-                time.sleep(5 * (attempt + 1))
-                continue
-            elif response.status_code != 200:
-                print(f"Error {response.status_code} for {url}")
-                continue
-                
-            response.raise_for_status()
-            
-            # Try to detect if we're being redirected to a login page
-            if any(x in response.url.lower() for x in ['login', 'signin', 'subscribe']):
-                print(f"Redirected to login page for {url}")
-                continue
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Remove unwanted elements
-            for element in soup.find_all(['script', 'style', 'nav', 'header', 'footer', 'aside', 'form']):
-                element.decompose()
-                
-            # Try different content selectors
-            content = None
-            selectors = [
-                'article',
-                'main',
-                'div[class*="content"]',
-                'div[class*="article"]',
-                'div[class*="story"]',
-                'div[class*="post"]',
-                'div[class*="entry"]',
-                'div[class*="body"]',
-                'div[class*="text"]',
-                'div[class*="article-body"]',
-                'div[class*="story-body"]'
-            ]
-            
-            for selector in selectors:
-                content = soup.select_one(selector)
-                if content:
-                    break
-                    
+        # Try different content selectors
+        content = None
+        selectors = [
+            'article',
+            'main',
+            'div[class*="content"]',
+            'div[class*="article"]',
+            'div[class*="story"]',
+            'div[class*="post"]',
+            'div[class*="entry"]',
+            'div[class*="body"]',
+            'div[class*="text"]'
+        ]
+        
+        for selector in selectors:
+            content = soup.select_one(selector)
             if content:
-                # Get all text paragraphs
-                paragraphs = content.find_all('p')
-                text = ' '.join([p.get_text().strip() for p in paragraphs])
-                return clean_text(text)
+                break
                 
-            print(f"Could not find content for URL: {url}")
-            return ""
+        if content:
+            # Get all text paragraphs
+            paragraphs = content.find_all('p')
+            text = ' '.join([p.get_text().strip() for p in paragraphs])
+            return clean_text(text)
             
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching content from {url} (attempt {attempt + 1}/{max_retries}): {str(e)}")
-            if attempt == max_retries - 1:
-                return ""
-            continue
-        except Exception as e:
-            print(f"Unexpected error for {url}: {str(e)}")
-            return ""
-    
-    return ""
+        print(f"Could not find content for URL: {url}")
+        return ""
+        
+    except Exception as e:
+        print(f"Error fetching content from {url}: {str(e)}")
+        return ""
 
 def is_credible_source(url: str) -> bool:
     """

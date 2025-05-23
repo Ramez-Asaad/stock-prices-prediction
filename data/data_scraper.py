@@ -10,7 +10,6 @@ import sys
 import os
 import argparse
 from googlesearch import search
-import random
 
 # Add project root to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -44,37 +43,6 @@ STOCK_MAPPING = {
     "XOM": "Exxon Mobil"
 }
 
-def search_with_retry(query: str, max_retries: int = 3, base_delay: int = 30) -> List[str]:
-    """
-    Search with retry mechanism and exponential backoff.
-    
-    Args:
-        query (str): Search query
-        max_retries (int): Maximum number of retry attempts
-        base_delay (int): Base delay in seconds
-        
-    Returns:
-        List[str]: List of search results
-    """
-    for attempt in range(max_retries):
-        try:
-            # Add jitter to the delay
-            delay = base_delay * (2 ** attempt) + random.uniform(1, 5)
-            if attempt > 0:
-                print(f"Waiting {delay:.1f} seconds before retry...")
-                time.sleep(delay)
-            
-            results = list(search(query, num_results=20, lang="en"))
-            return results
-            
-        except Exception as e:
-            print(f"Error searching for {query} (attempt {attempt + 1}/{max_retries}): {str(e)}")
-            if attempt == max_retries - 1:
-                return []
-            continue
-    
-    return []
-
 def fetch_news(company: str, start_date: Union[str, datetime], end_date: Union[str, datetime], ticker: str) -> List[Dict[str, Any]]:
     """
     Fetch news articles using Google search for specific dates.
@@ -98,14 +66,14 @@ def fetch_news(company: str, start_date: Union[str, datetime], end_date: Union[s
     start_date_str = start_date.strftime("%B %d, %Y")
     end_date_str = end_date.strftime("%B %d, %Y")
     
-    # Create search queries with different formats
+    # Create search queries
     search_queries = [
         f"{company} stock news {start_date_str}",
         f"{ticker} stock news {start_date_str}",
-        f"{company} financial news {start_date_str}",
-        f"{ticker} financial news {start_date_str}",
         f"{company} stock news {end_date_str}",
-        f"{ticker} stock news {end_date_str}"
+        f"{ticker} stock news {end_date_str}",
+        f"{company} financial news {start_date_str}",
+        f"{ticker} financial news {start_date_str}"
     ]
     
     data = []
@@ -113,47 +81,48 @@ def fetch_news(company: str, start_date: Union[str, datetime], end_date: Union[s
     
     for query in search_queries:
         print(f"\nSearching for: {query}")
-        
-        # Search with retry mechanism
-        search_results = search_with_retry(query)
-        if not search_results:
-            print(f"No results found for query: {query}")
+        try:
+            # Search Google
+            search_results = search(query, num_results=20, lang="en")
+            
+            for url in search_results:
+                if url in seen_urls or not is_credible_source(url):
+                    continue
+                    
+                seen_urls.add(url)
+                print(f"Found article: {url}")
+                
+                # Fetch article content
+                content = fetch_article_content(url)
+                if not content or len(content.split()) < 50:
+                    continue
+                    
+                # Extract publication date
+                pub_date = extract_publication_date(content)
+                if not pub_date or not (start_date <= pub_date <= end_date):
+                    continue
+                
+                # Get sentiment and confidence
+                sentiment, confidence = get_sentiment(content)
+                
+                data.append({
+                    "title": url.split('/')[-1].replace('-', ' ').title(),
+                    "body": content,
+                    "publication_time": pub_date.isoformat(),
+                    "source": urlparse(url).netloc,
+                    "url": url,
+                    "ticker": ticker,
+                    "sentiment": sentiment,
+                    "sentiment_confidence": confidence
+                })
+                print(f"Successfully added article from {url}")
+                
+            # Be nice to the servers
+            time.sleep(2)
+            
+        except Exception as e:
+            print(f"Error searching for {query}: {str(e)}")
             continue
-        
-        for url in search_results:
-            if url in seen_urls or not is_credible_source(url):
-                continue
-                
-            seen_urls.add(url)
-            print(f"Found article: {url}")
-            
-            # Fetch article content
-            content = fetch_article_content(url)
-            if not content or len(content.split()) < 50:
-                continue
-                
-            # Extract publication date
-            pub_date = extract_publication_date(content)
-            if not pub_date or not (start_date <= pub_date <= end_date):
-                continue
-            
-            # Get sentiment and confidence
-            sentiment, confidence = get_sentiment(content)
-            
-            data.append({
-                "title": url.split('/')[-1].replace('-', ' ').title(),
-                "body": content,
-                "publication_time": pub_date.isoformat(),
-                "source": urlparse(url).netloc,
-                "url": url,
-                "ticker": ticker,
-                "sentiment": sentiment,
-                "sentiment_confidence": confidence
-            })
-            print(f"Successfully added article from {url}")
-            
-        # Add delay between queries
-        time.sleep(random.uniform(5, 10))
             
     return data
 
@@ -185,9 +154,6 @@ if __name__ == "__main__":
             all_articles.extend(articles)
         else:
             print(f"No articles found for {company_name}")
-        
-        # Add delay between companies
-        time.sleep(random.uniform(15, 30))
     
     if not all_articles:
         print("No articles found for any company in the specified date range.")
