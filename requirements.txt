@@ -1,0 +1,6 @@
+# Project Dependencies
+pandas
+numpy
+scikit-learn
+matplotlib
+plotly

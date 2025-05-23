@@ -1,0 +1,7 @@
+# Ignore data, models, and other unnecessary files
+/data/
+/models/
+*.pyc
+__pycache__/
+TeamName_Code.zip
+TeamName_ProjectReport.pdf
